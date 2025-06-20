@@ -2,11 +2,7 @@
 
 ## Requirements
 
-To install Google cloud services, run: 
-    
-    pip install google-cloud-storage
+To install requirements, run: 
 
-To use pillow (to convert tif into pdf):
+    pip install -r requirements.txt
 
-    pip install Pillow
-    
