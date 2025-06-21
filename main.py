@@ -5,8 +5,12 @@ import time
 import zipfile
 from google.cloud import storage
 
+
 from test_bucket import download_files_from_bucket, process_files_to_pdf
 from ocr import batch_process_documents, extract_text_from_document
+from extracter import extract_document_info
+
+
 
 # ─── CONFIGURABLE PATHS TO YOUR STATIC CSVs ───────────────────────────────────
 # Place your Elenco Personale.csv and Cluster_Docs.csv under resources/
@@ -51,6 +55,8 @@ def process_document_local(fpdf, ftxt):
         text = f.read()
 
     # Pass the text to the extraction function
+    extracted = extract_document_info(text, filename=os.path.basename(fpdf))
+
 
 
     return {
