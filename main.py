@@ -15,10 +15,10 @@ def download_input_files(storage_client, bucket_name):
         if blob.name.endswith("/"):
             continue
         # create local dir if needed
-        local_dir = os.path.join("input_files", os.path.dirname(blob.name))
+        local_dir = os.path.join("downloaded_files", os.path.dirname(blob.name))
         os.makedirs(local_dir, exist_ok=True)
         # download
-        local_path = os.path.join("input_files", blob.name)
+        local_path = os.path.join("downloaded_files", blob.name)
         if os.path.exists(local_path):
             print(f"Skipping download of {blob.name} (already exists)")
         else:
