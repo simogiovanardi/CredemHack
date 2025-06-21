@@ -70,13 +70,22 @@ def convert_tif_to_pdf(tif_directory, pdf_directory):
             except Exception as e:
                 print(f"Error converting '{filename}': {e}")
 
+    # delete tif files
+    for filename in os.listdir(tif_dir):
+        if filename.lower().endswith((".tif", ".tiff")):
+            file_path = os.path.join(tif_dir, filename)
+            try:
+                os.remove(file_path)
+                print(f"Removed: {file_path}")
+            except OSError as e:
+                print(f"Error removing {file_path}: {e}")
 
 if __name__ == "__main__":
     my_bucket_name = "credemhack-documents-iam"
     my_local_dir = "downloaded_files"
 
     # Download all files
-    # download_files_from_bucket(my_bucket_name, my_local_dir) # <-- uncomment the first time to download files
+    download_files_from_bucket(my_bucket_name, my_local_dir) # <-- uncomment the first time to download files
 
     tif_dir = "downloaded_files"
     pdf_dir = "downloaded_files"
