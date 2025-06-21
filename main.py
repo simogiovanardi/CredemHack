@@ -2,6 +2,10 @@ import os
 import sys
 from google.cloud import storage
 from test_bucket import download_files_from_bucket, process_files_to_pdf
+from ocr import batch_process_documents, extract_text_from_document, process_document
+
+
+
 
 
 
@@ -85,6 +89,14 @@ def upload_to_gcs(storage_client, bucket_name, run_id, local_file_path):
     print(f"Uploaded solution.zip to gs://{bucket_name}/{destination_blob}")
 
 def main():
+    
+    # 6) Prepare local output dirs
+    out_base = "output"
+    os.makedirs(out_base, exist_ok=True)
+    dat_path = os.path.join(out_base, "DocumentsOfRecord.dat")
+    blob_dir = os.path.join(out_base, "BlobFiles")
+    os.makedirs(blob_dir, exist_ok=True)
+
     # 1) Read env vars
     run_id = os.environ.get("RUN_ID")
     input_bucket = os.environ.get("INPUT_BUCKET")
@@ -103,16 +115,23 @@ def main():
     # 2) Init storage client
     storage_client = storage.Client()
 
-    # 3) Download input
+    # 3) Download input from bucket to output/Blob
     bucket_name = "credemhack-documents-iam"
-    blob_dir = "BlobFiles"
     pdf_dir = "pdf_files"
 
     download_files_from_bucket(bucket_name, blob_dir)  
     process_files_to_pdf(blob_dir, pdf_dir)
 
-    # 3a) List the pdf files
+    # 3a) List the pdf files in pdf_files
     input_items = [os.path.join(pdf_dir, f) for f in os.listdir(pdf_dir) if f.endswith(".pdf")]    
+
+    # Extract the text in a dedicated folder
+    project_id = "credemhack-iam"
+    location = "us"  # or your processor's location
+    processor_id = "906fe5719131d935"
+    input_folder = "pdf_files"
+    output_folder = "ocr_output"
+    batch_process_documents(project_id, location, processor_id, input_folder, output_folder)
 
     # 4) Process each document
     processed_docs = []
@@ -123,13 +142,6 @@ def main():
     # 5) Generate the two record lists
     dor_records = generate_documents_of_record_records(processed_docs)
     da_records  = generate_document_attachment_records(processed_docs)
-
-    # 6) Prepare local output dirs
-    out_base = "output"
-    os.makedirs(out_base, exist_ok=True)
-    dat_path = os.path.join(out_base, "DocumentsOfRecord.dat")
-    blob_dir = os.path.join(out_base, "BlobFiles")
-    os.makedirs(blob_dir, exist_ok=True)
 
     # 7) Write .dat
     write_dat_file(dor_records, da_records, dat_path)
