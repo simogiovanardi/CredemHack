@@ -1,3 +1,4 @@
 Pillow
 google-cloud-storage
 google-cloud-documentai
+google-cloud-aiplatform
