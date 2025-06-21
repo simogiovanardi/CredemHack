@@ -2,3 +2,4 @@ pdf_files/
 ocr_output/
 output/
 BlobFiles/
+__pycache__/
