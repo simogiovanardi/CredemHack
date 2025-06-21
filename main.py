@@ -1,32 +1,9 @@
 import os
 import sys
 from google.cloud import storage
+from test_bucket import download_files_from_bucket, process_files_to_pdf
 
-def download_input_files(storage_client, bucket_name):
-    """
-    List or download all blobs in gs://{bucket_name}/
-    Return a list of local file paths to process.
-    """
-    bucket = storage_client.bucket(bucket_name)
-    blobs = bucket.list_blobs()
-    local_paths = []
-    for blob in blobs:
-        # skip "directories"
-        if blob.name.endswith("/"):
-            continue
-        # create local dir if needed
-        local_dir = os.path.join("downloaded_files", os.path.dirname(blob.name))
-        os.makedirs(local_dir, exist_ok=True)
-        # download
-        local_path = os.path.join("downloaded_files", blob.name)
-        if os.path.exists(local_path):
-            print(f"Skipping download of {blob.name} (already exists)")
-        else:
-            print(f"Downloading {blob.name} to {local_path}")
-            blob.download_to_filename(local_path)
-        # add to list of files to process
-        local_paths.append(local_path)
-    return local_paths
+
 
 def process_document(blob_or_path):
     """
@@ -80,23 +57,6 @@ def write_dat_file(dor_records, da_records, output_path):
         for line in da_records:
             f.write(line + "\n")
 
-def copy_to_blobfiles(src, dest_dir):
-    """
-    Copy the original file (or fetch from GCS) into dest_dir
-    so it ends up under BlobFiles/
-    """
-    if src.startswith("gs://"):
-        # copy from GCS
-        bucket_name, blob_name = src[5:].split("/", 1)
-        storage_client = storage.Client()
-        bucket = storage_client.bucket(bucket_name)
-        blob = bucket.blob(blob_name)
-        dest_path = os.path.join(dest_dir, os.path.basename(blob_name))
-        blob.download_to_filename(dest_path)
-    else:
-        # copy from local
-        pass
-
 def create_solution_zip(dat_file_path, blob_files_dir, zip_path):
     """
     Create a ZIP containing:
@@ -143,8 +103,16 @@ def main():
     # 2) Init storage client
     storage_client = storage.Client()
 
-    # 3) Download or list inputs
-    input_items = download_input_files(storage_client, input_bucket)
+    # 3) Download input
+    bucket_name = "credemhack-documents-iam"
+    blob_dir = "BlobFiles"
+    pdf_dir = "pdf_files"
+
+    download_files_from_bucket(bucket_name, blob_dir)  
+    process_files_to_pdf(blob_dir, pdf_dir)
+
+    # 3a) List the pdf files
+    input_items = [os.path.join(pdf_dir, f) for f in os.listdir(pdf_dir) if f.endswith(".pdf")]    
 
     # 4) Process each document
     processed_docs = []
@@ -165,10 +133,6 @@ def main():
 
     # 7) Write .dat
     write_dat_file(dor_records, da_records, dat_path)
-
-    # 8) Copy original docs into BlobFiles
-    for item in input_items:
-        copy_to_blobfiles(item, blob_dir)
 
     # 9) Zip everything
     zip_path = os.path.join(out_base, "solution.zip")
