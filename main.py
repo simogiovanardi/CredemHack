@@ -1,156 +1,197 @@
 import os
 import sys
+import csv
+import time
+import zipfile
 from google.cloud import storage
+
 from test_bucket import download_files_from_bucket, process_files_to_pdf
-from ocr import batch_process_documents, extract_text_from_document, process_document
+from ocr import batch_process_documents, extract_text_from_document
+
+# ─── CONFIGURABLE PATHS TO YOUR STATIC CSVs ───────────────────────────────────
+# Place your Elenco Personale.csv and Cluster_Docs.csv under resources/
+BASE_DIR = os.path.dirname(__file__)
+PERSONNEL_CSV = os.path.join(BASE_DIR, "resources", "Elenco_Personale.csv")
+CLUSTER_CSV   = os.path.join(BASE_DIR, "resources", "Cluster_Docs.csv")
+
+# in‐memory maps
+cluster_map   = [
+    "Provvedimenti a favore",
+    "Supervisione Mifid",
+    "Flessibilità orarie",
+    "Polizza sanitaria",
+    "Formazione",
+    "Fringe benefits",
+    "Assunzione matricola",
+    "Primo impiego",
+    "Fondo pensione",
+    "Destinazione TFR",
+    "Nessun cluster",
+    "Nomina titolarità",
+    "Assegnazione ruolo",
+    "Part-time",
+    "Cessazione",
+    "Proroga TD",
+    "Provvedimenti disciplinari",
+    "Trasferimento",
+    "Lettera assunzione",
+    "Trasformazione TI",
+    "Proposta di assunzione",
+]
 
 
 
+def process_document_local(file_path):
+
+    print(f"Processing {file_path}")
 
 
-
-def process_document(blob_or_path):
-    """
-    Given a document (PDF/image), classify it, extract name/surname/date,
-    enrich via anagrafica, etc.
-    Return a dict with all intermediate metadata needed.
-    """
-    # TODO: implement
     return {
-        "person_number": None,
-        "document_type": None,
-        "country": None,
-        "date_from": None,
-        "date_to": None,
-        "document_name": None,
-        "original_file": None,   # path or blob name
-        # etc...
+        "filename":            filename,
+        "person_number":       person_number,
+        "document_type":       document_type,
+        "country":             country,
+        "document_code":       document_code,
+        "document_name":       document_name,
+        "date_from":           date_from,
+        "date_to":             "",              # always empty
+        "source_system_owner": "PEOPLE",
+        "source_system_id":    document_code,
     }
 
 def generate_documents_of_record_records(docs):
-    """
-    Given list of processed docs, build the list of lines/records
-    for the DocumentsOfRecord section.
-    """
-    # TODO: implement
-    return []
+    out = []
+    for d in docs:
+        out.append("|".join([
+            d["filename"],
+            "MERGE",
+            "DocumentsOfRecord",
+            d["person_number"],
+            d["document_type"],
+            d["country"],
+            d["document_code"],
+            d["document_name"],
+            d["date_from"],
+            d["date_to"],
+            d["source_system_owner"],
+            d["source_system_id"],
+        ]))
+    return out
 
 def generate_document_attachment_records(docs):
-    """
-    Given list of processed docs, build the list of lines/records
-    for the DocumentAttachment section.
-    """
-    # TODO: implement
-    return []
+    out = []
+    for d in docs:
+        out.append("|".join([
+            d["filename"],
+            "MERGE",
+            "DocumentAttachment",
+            d["person_number"],
+            d["document_type"],
+            d["country"],
+            d["document_code"],
+            "FILE",                 # DataTypeCode
+            d["filename"],          # URLorTextorFileName
+            d["filename"],          # Title
+            d["filename"],          # File
+            d["source_system_owner"],
+            d["source_system_id"],
+        ]))
+    return out
 
 def write_dat_file(dor_records, da_records, output_path):
-    """
-    Write the two METADATA sections and all MERGE lines to
-    output_path in UTF-8, pipe-delimited.
-    """
     with open(output_path, "w", encoding="utf-8") as f:
-        # Section 1 header
-        f.write("METADATA|DocumentsOfRecord|PersonNumber|DocumentType|Country|"
-                "DocumentCode|DocumentName|DateFrom|DateTo|SourceSystemOwner|SourceSystemId\n")
+        # Section 1
+        f.write(
+            "FILENAME|METADATA|DocumentsOfRecord|PersonNumber|DocumentType|Country|"
+            "DocumentCode|DocumentName|DateFrom|DateTo|SourceSystemOwner|SourceSystemId\n"
+        )
         for line in dor_records:
             f.write(line + "\n")
-        # Section 2 header
-        f.write("METADATA|DocumentAttachment|PersonNumber|DocumentType|Country|"
-                "DocumentCode|DataTypeCode|URLorTextorFileName|Title|File|"
-                "SourceSystemOwner|SourceSystemId\n")
+
+        # Section 2
+        f.write(
+            "FILENAME|METADATA|DocumentAttachment|PersonNumber|DocumentType|Country|"
+            "DocumentCode|DataTypeCode|URLorTextorFileName|Title|File|"
+            "SourceSystemOwner|SourceSystemId\n"
+        )
         for line in da_records:
             f.write(line + "\n")
 
 def create_solution_zip(dat_file_path, blob_files_dir, zip_path):
-    """
-    Create a ZIP containing:
-      - DocumentsOfRecord.dat at root
-      - BlobFiles/ with all original docs
-    """
-    import zipfile
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
-        # add .dat
+        # add the .dat
         z.write(dat_file_path, arcname=os.path.basename(dat_file_path))
-        # add blob files
+        # add every file under blob_files_dir into BlobFiles/
         for root, _, files in os.walk(blob_files_dir):
             for fname in files:
                 full = os.path.join(root, fname)
-                arc = os.path.join("BlobFiles", fname)
+                arc  = os.path.join("BlobFiles", fname)
                 z.write(full, arcname=arc)
 
 def upload_to_gcs(storage_client, bucket_name, run_id, local_file_path):
-    """
-    Upload local_file_path → gs://{bucket_name}/{run_id}/solution.zip
-    """
     bucket = storage_client.bucket(bucket_name)
-    destination_blob = f"{run_id}/solution.zip"
-    blob = bucket.blob(destination_blob)
+    dest   = f"{run_id}/solution.zip"
+    blob   = bucket.blob(dest)
     blob.upload_from_filename(local_file_path)
-    print(f"Uploaded solution.zip to gs://{bucket_name}/{destination_blob}")
+    print(f"Caricamento completato: gs://{bucket_name}/{dest}")
 
 def main():
-    
-    # 6) Prepare local output dirs
+    # 1) Read env vars (or fall back for local testing)
+    run_id       = os.environ.get("RUN_ID")
+    input_bucket = os.environ.get("INPUT_BUCKET")
+    output_bucket= os.environ.get("OUTPUT_BUCKET")
+    if not (run_id and input_bucket and output_bucket):
+        run_id        = str(int(time.time()))
+        input_bucket  = "credemhack-documents-iam"
+        output_bucket = "credemhack-output-iam"
+
+    # 2) Init GCS client
+    storage_client = storage.Client()
+
+    # 3) Prepare local dirs
     out_base = "output"
     os.makedirs(out_base, exist_ok=True)
     dat_path = os.path.join(out_base, "DocumentsOfRecord.dat")
     blob_dir = os.path.join(out_base, "BlobFiles")
     os.makedirs(blob_dir, exist_ok=True)
 
-    # 1) Read env vars
-    run_id = os.environ.get("RUN_ID")
-    input_bucket = os.environ.get("INPUT_BUCKET")
-    output_bucket = os.environ.get("OUTPUT_BUCKET")
-
-    if not run_id or not input_bucket or not output_bucket:
-        import time
-        run_id = str(int(time.time()))
-        input_bucket = "credemhack-documents-iam"
-        output_bucket = "credemhack-output-iam"
-
-    if not all([run_id, input_bucket, output_bucket]):
-        print("ERROR: RUN_ID, INPUT_BUCKET and OUTPUT_BUCKET must be set", file=sys.stderr)
-        sys.exit(1)
-
-    # 2) Init storage client
-    storage_client = storage.Client()
-
-    # 3) Download input from bucket to output/Blob
-    bucket_name = "credemhack-documents-iam"
-    pdf_dir = "pdf_files"
-
-    download_files_from_bucket(bucket_name, blob_dir)  
+    # 4) Download & convert to PDF
+    download_files_from_bucket(input_bucket, blob_dir)
+    pdf_dir = os.path.join(out_base, "pdf_files")
     process_files_to_pdf(blob_dir, pdf_dir)
 
-    # 3a) List the pdf files in pdf_files
-    input_items = [os.path.join(pdf_dir, f) for f in os.listdir(pdf_dir) if f.endswith(".pdf")]    
+    # 5) OCR‐batch (if you need it elsewhere)
+    ocr_output = os.path.join(out_base, "ocr_output")
+    batch_process_documents(
+        project_id   = "credemhack-iam",
+        location     = "us",
+        processor_id = "906fe5719131d935",
+        input_folder = pdf_dir,
+        output_folder= ocr_output
+    )
 
-    # Extract the text in a dedicated folder
-    project_id = "credemhack-iam"
-    location = "us"  # or your processor's location
-    processor_id = "906fe5719131d935"
-    input_folder = "pdf_files"
-    output_folder = "ocr_output"
-    batch_process_documents(project_id, location, processor_id, input_folder, output_folder)
+    # 7) Process each PDF
+    processed = []
+    for fname in os.listdir(pdf_dir):
+        if not fname.lower().endswith(".pdf"):
+            continue
+        fp = os.path.join(pdf_dir, fname)
+        # call our local implementation
+        rec = process_document_local(fp)
+        processed.append(rec)
 
-    # 4) Process each document
-    processed_docs = []
-    for item in input_items:
-        doc = process_document(item)
-        processed_docs.append(doc)
+    # 8) Build records
+    dor = generate_documents_of_record_records(processed)
+    da  = generate_document_attachment_records(processed)
 
-    # 5) Generate the two record lists
-    dor_records = generate_documents_of_record_records(processed_docs)
-    da_records  = generate_document_attachment_records(processed_docs)
+    # 9) Write the .dat
+    write_dat_file(dor, da, dat_path)
 
-    # 7) Write .dat
-    write_dat_file(dor_records, da_records, dat_path)
-
-    # 9) Zip everything
+    # 10) Zip up
     zip_path = os.path.join(out_base, "solution.zip")
     create_solution_zip(dat_path, blob_dir, zip_path)
 
-    # 10) Upload
+    # 11) Upload
     upload_to_gcs(storage_client, output_bucket, run_id, zip_path)
 
 if __name__ == "__main__":
